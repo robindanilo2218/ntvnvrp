@@ -1,0 +1,46 @@
+# Build
+build/
+out/
+x64/
+x86/
+Debug/
+Release/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.log
+
+# NuGet packages
+packages/
+nuget.exe
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.sln.docstates
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# User data
+NativeNav_UserData/
+
+# OS
+Thumbs.db
+.DS_Store

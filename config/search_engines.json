@@ -1,0 +1,40 @@
+{
+  "default": "Google",
+  "engines": [
+    {
+      "name": "Google",
+      "url": "https://www.google.com/search?q=",
+      "icon": "🔍"
+    },
+    {
+      "name": "DuckDuckGo",
+      "url": "https://duckduckgo.com/?q=",
+      "icon": "🦆"
+    },
+    {
+      "name": "Bing",
+      "url": "https://www.bing.com/search?q=",
+      "icon": "🔎"
+    },
+    {
+      "name": "Yahoo",
+      "url": "https://search.yahoo.com/search?p=",
+      "icon": "🌐"
+    },
+    {
+      "name": "Brave",
+      "url": "https://search.brave.com/search?q=",
+      "icon": "🦁"
+    },
+    {
+      "name": "Wikipedia (ES)",
+      "url": "https://es.wikipedia.org/wiki/Special:Search?search=",
+      "icon": "📚"
+    },
+    {
+      "name": "YouTube",
+      "url": "https://www.youtube.com/results?search_query=",
+      "icon": "▶️"
+    }
+  ]
+}
