@@ -104,7 +104,7 @@ static std::string ReadFileToString(const std::wstring& path) {
     std::ifstream file(WideToUtf8(path));
     if (!file.is_open()) {
         // Try wide path
-        std::ifstream file2(path);
+        std::ifstream file2(path.c_str());
         if (!file2.is_open()) return "";
         return std::string((std::istreambuf_iterator<char>(file2)),
                            std::istreambuf_iterator<char>());
@@ -202,12 +202,18 @@ int NativeNavBrowser::Run() {
         if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
             HWND focus = GetFocus();
             if (focus == m_hUrlBar) {
-                PostMessage(m_hWnd, WM_COMMAND, MAKEWPARAM(IDC_GO_BTN, BN_CLICKED), 0);
+                // Trigger the Go button
+                SendMessage(m_hWnd, WM_COMMAND, MAKEWPARAM(IDC_GO_BTN, BN_CLICKED), (LPARAM)m_hGoBtn);
+                // Prevent the edit control from beeping by not translating this message
                 continue;
             }
         }
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        
+        // Let standard dialog messages process (for tab navigation, etc)
+        if (!IsDialogMessage(m_hWnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
     CoUninitialize();
     return (int)msg.wParam;
@@ -326,13 +332,13 @@ void NativeNavBrowser::CreateToolbar() {
 
     // Shield button (ad blocker toggle)
     m_hShieldBtn = CreateWindowExW(0, L"BUTTON",
-        m_filtersActive ? L"\x1F6E1" : L"\x26A0",
+        m_filtersActive ? L"\U0001F6E1" : L"\u26A0",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         0, y, btnW, btnH, m_hWnd, (HMENU)IDC_SHIELD_BTN, m_hInstance, nullptr);
     SendMessage(m_hShieldBtn, WM_SETFONT, (WPARAM)hBtnFont, TRUE);
 
     // Inspector button
-    m_hInspectorBtn = CreateWindowExW(0, L"BUTTON", L"\x1F50D",
+    m_hInspectorBtn = CreateWindowExW(0, L"BUTTON", L"\U0001F50D",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         0, y, btnW, btnH, m_hWnd, (HMENU)IDC_INSPECTOR_BTN, m_hInstance, nullptr);
     SendMessage(m_hInspectorBtn, WM_SETFONT, (WPARAM)hBtnFont, TRUE);
@@ -430,6 +436,7 @@ LRESULT CALLBACK NativeNavBrowser::StaticWndProc(HWND hwnd, UINT msg, WPARAM wPa
 LRESULT NativeNavBrowser::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
+        m_hWnd = hwnd;
         CreateToolbar();
         return 0;
 
@@ -471,7 +478,7 @@ LRESULT NativeNavBrowser::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             break;
         case IDC_SHIELD_BTN:
             m_filtersActive = !m_filtersActive;
-            SetWindowTextW(m_hShieldBtn, m_filtersActive ? L"\x1F6E1" : L"\x26A0");
+            SetWindowTextW(m_hShieldBtn, m_filtersActive ? L"\U0001F6E1" : L"\u26A0");
             // Re-inject or remove filters
             if (m_webView) {
                 if (m_filtersActive) {
@@ -505,29 +512,71 @@ LRESULT NativeNavBrowser::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 // WebView2 Initialization
 // ============================================================
 
+class CustomEnvironmentOptions : public ICoreWebView2EnvironmentOptions {
+private:
+    ULONG refCount = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+        if (!ppv) return E_POINTER;
+        if (IsEqualIID(riid, IID_ICoreWebView2EnvironmentOptions) || IsEqualIID(riid, IID_IUnknown)) {
+            *ppv = static_cast<ICoreWebView2EnvironmentOptions*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = --refCount;
+        if (count == 0) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE get_AdditionalBrowserArguments(LPWSTR *value) override {
+        if (!value) return E_POINTER;
+        const wchar_t* args = L"--block-third-party-cookies --disable-features=ThirdPartyCookies";
+        size_t len = wcslen(args) + 1;
+        *value = (LPWSTR)CoTaskMemAlloc(len * sizeof(wchar_t));
+        if (*value) wcscpy(*value, args);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE put_AdditionalBrowserArguments(LPCWSTR value) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE get_Language(LPWSTR *value) override { *value = nullptr; return S_OK; }
+    HRESULT STDMETHODCALLTYPE put_Language(LPCWSTR value) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE get_TargetCompatibleBrowserVersion(LPWSTR *value) override { *value = nullptr; return S_OK; }
+    HRESULT STDMETHODCALLTYPE put_TargetCompatibleBrowserVersion(LPCWSTR value) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE get_AllowSingleSignOnUsingOSPrimaryAccount(BOOL *value) override { if(value) *value = FALSE; return S_OK; }
+    HRESULT STDMETHODCALLTYPE put_AllowSingleSignOnUsingOSPrimaryAccount(BOOL value) override { return S_OK; }
+};
+
 void NativeNavBrowser::InitializeWebView() {
     // Create WebView2 environment with custom options
-    auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
-    
-    // Block third-party cookies via command line args
-    options->put_AdditionalBrowserArguments(
-        L"--block-third-party-cookies --disable-features=ThirdPartyCookies"
-    );
+    ComPtr<ICoreWebView2EnvironmentOptions> options = new CustomEnvironmentOptions();
 
     std::wstring userDataFolder = GetExePath() + L"\\NativeNav_UserData";
 
-    CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, userDataFolder.c_str(), options.Get(),
+    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+        nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-                if (FAILED(result) || !env) return result;
+                if (FAILED(result) || !env) {
+                    wchar_t msg[256];
+                    swprintf(msg, 256, L"Failed to create WebView2 Environment.\nHRESULT: 0x%08X", result);
+                    MessageBoxW(m_hWnd, msg, L"WebView2 Error", MB_ICONERROR | MB_OK);
+                    return result;
+                }
 
                 m_webViewEnvironment = env;
 
                 env->CreateCoreWebView2Controller(m_hWnd,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                         [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
-                            if (FAILED(result) || !controller) return result;
+                            if (FAILED(result) || !controller) {
+                                wchar_t msg[256];
+                                swprintf(msg, 256, L"Failed to create WebView2 Controller.\nHRESULT: 0x%08X", result);
+                                MessageBoxW(m_hWnd, msg, L"WebView2 Error", MB_ICONERROR | MB_OK);
+                                return result;
+                            }
 
                             m_webViewController = controller;
                             controller->get_CoreWebView2(&m_webView);
@@ -549,7 +598,7 @@ void NativeNavBrowser::InitializeWebView() {
 
                             // Block third-party cookies via settings if available
                             ComPtr<ICoreWebView2Settings> settings2;
-                            if (SUCCEEDED(settings->QueryInterface(IID_PPV_ARGS(&settings2)))) {
+                            if (SUCCEEDED(settings->QueryInterface(IID_ICoreWebView2Settings, (void**)&settings2))) {
                                 // Additional settings if available
                             }
 
@@ -646,6 +695,12 @@ void NativeNavBrowser::InitializeWebView() {
 
                 return S_OK;
             }).Get());
+
+    if (FAILED(hr)) {
+        wchar_t msg[256];
+        swprintf(msg, 256, L"Immediate failure in CreateCoreWebView2EnvironmentWithOptions.\nHRESULT: 0x%08X\nIs WebView2Loader.dll present?", hr);
+        MessageBoxW(m_hWnd, msg, L"WebView2 Error", MB_ICONERROR | MB_OK);
+    }
 }
 
 // ============================================================
@@ -653,7 +708,10 @@ void NativeNavBrowser::InitializeWebView() {
 // ============================================================
 
 void NativeNavBrowser::NavigateToUrl(const std::wstring& url) {
-    if (!m_webView) return;
+    if (!m_webView) {
+        MessageBoxW(m_hWnd, L"m_webView is null! WebView2 failed to initialize in time.", L"Navigation Error", MB_ICONERROR | MB_OK);
+        return;
+    }
 
     if (url == L"about:home" || url == L"nativenav://home") {
         std::wstring html = GetHomePageHtml();

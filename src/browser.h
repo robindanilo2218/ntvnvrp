@@ -22,10 +22,12 @@
 
 // WebView2 headers
 #include "WebView2.h"
-#include "WebView2EnvironmentOptions.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "WebView2LoaderStatic.lib")
+
+#include <cstdint>
+#include "../w64_wrl_fix.h"
 
 using namespace Microsoft::WRL;
 
